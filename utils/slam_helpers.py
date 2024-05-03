@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from utils.slam_external import build_rotation
+from utils.recon_helpers import setup_camera_light
 
 def l1_loss_v1(x, y):
     return torch.abs((x - y)).mean()
@@ -212,6 +213,13 @@ def get_depth_and_silhouette(pts_3D, w2c):
     
     return depth_silhouette
 
+def get_depth(pts_3D, w2c):
+    pts4 = torch.cat((pts_3D, torch.ones_like(pts_3D[:, :1])), dim=-1)
+    pts_in_cam = (w2c @ pts4.transpose(0, 1)).transpose(0, 1)
+    depth_z = pts_in_cam[:, 2].unsqueeze(-1) # [num_gaussians, 1]
+    depth = torch.zeros((pts_3D.shape[0], 1)).cuda().float()
+    depth[:, 0] = depth_z.squeeze(-1)
+    return depth
 
 def params2depthplussilhouette(params, w2c):
     # Check if Gaussians are Isotropic
@@ -248,6 +256,44 @@ def transformed_params2depthplussilhouette(params, w2c, transformed_gaussians):
     }
     return rendervar
 
+def transformed_params2rendervar_light(params, w2c, transformed_gaussians, depth):
+    # Check if Gaussians are Isotropic
+    if params['log_scales'].shape[1] == 1:
+        log_scales = torch.tile(params['log_scales'], (1, 3))
+    else:
+        log_scales = params['log_scales']
+    # Initialize Render Variables
+    rendervar = {
+        'means3D': transformed_gaussians['means3D'],
+        'colors_precomp': params['rgb_colors'],
+        'rotations': F.normalize(transformed_gaussians['unnorm_rotations']),
+        'opacities': torch.sigmoid(params['logit_opacities']),
+        'scales': torch.exp(log_scales),
+        'means2D': torch.zeros_like(params['means3D'], requires_grad=True, device="cuda") + 0,
+        'gt_depth': depth,
+        'viewmatrix': w2c
+    }
+
+    return rendervar
+
+def params2rendervar_light(params, unnorm_rots, pts, w2cT, depth):
+    # Check if Gaussians are Isotropic
+    if params['log_scales'].shape[1] == 1:
+        log_scales = torch.tile(params['log_scales'], (1, 3))
+    else:
+        log_scales = params['log_scales']
+    # Initialize Render Variables
+    rendervar = {
+        'means3D': pts,
+        'colors_precomp': params['rgb_colors'],
+        'rotations': F.normalize(unnorm_rots),
+        'opacities': torch.sigmoid(params['logit_opacities']),
+        'scales': torch.exp(log_scales),
+        'means2D': torch.zeros_like(pts, requires_grad=True, device="cuda") + 0,
+        'gt_depth': depth,
+        'viewmatrix': w2cT
+    }
+    return rendervar
 
 def transform_to_frame(params, time_idx, gaussians_grad, camera_grad):
     """
@@ -302,3 +348,42 @@ def transform_to_frame(params, time_idx, gaussians_grad, camera_grad):
         transformed_gaussians['unnorm_rotations'] = unnorm_rots
 
     return transformed_gaussians
+
+def rendervar_raster_settings(curr_data, params, time_idx, gaussians_grad, camera_grad):
+    """
+    Function to transform Isotropic or Anisotropic Gaussians in world frame.
+    
+    Args:
+        curr_data: dict of data
+        params: dict of parameters
+        time_idx: time index to transform to
+        gaussians_grad: enable gradients for Gaussians
+        camera_grad: enable gradients for camera pose
+    
+    Returns:
+        rastersettings: Rasterization settings
+        rendervar_light: Render variables
+    """
+    if camera_grad:
+        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx])
+        cam_tran = params['cam_trans'][..., time_idx]
+    else:
+        cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
+        cam_tran = params['cam_trans'][..., time_idx].detach()
+    curr_cam_rot = cam_rot
+    curr_cam_tran = cam_tran
+    curr_w2c = torch.eye(4).cuda().float()
+    curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
+    curr_w2c[:3, 3] = curr_cam_tran
+    curr_w2cT = curr_w2c.transpose(0, 1)
+    
+    if gaussians_grad:
+        pts = params['means3D']
+        unnorm_rots = params['unnorm_rotations']
+    else:
+        pts = params['means3D'].detach()
+        unnorm_rots = params['unnorm_rotations'].detach()
+    raster_settings = setup_camera_light(curr_data['im'].shape[2], curr_data['im'].shape[1],curr_data['intrinsics'], curr_w2c, track_off=False, map_off=True)
+    rendervar_light = params2rendervar_light(params, unnorm_rots, pts, curr_w2cT, curr_data['depth'])
+
+    return raster_settings, rendervar_light

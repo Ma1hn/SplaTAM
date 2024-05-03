@@ -161,3 +161,4 @@ class TUMDataset(GradSLAMDataset):
         embedding = torch.load(embedding_file_path, map_location="cpu")
         return embedding.permute(0, 2, 3, 1)
     
+

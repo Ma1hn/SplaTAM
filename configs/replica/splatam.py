@@ -6,13 +6,13 @@ scenes = ["room0", "room1", "room2",
           "office_", "office4"]
 
 primary_device="cuda:0"
-seed = 0
+seed = 5
 scene_name = scenes[0]
 
-map_every = 1
+map_every = 5
 keyframe_every = 5
-mapping_window_size = 24
-tracking_iters = 40
+mapping_window_size = 12
+tracking_iters = 15
 mapping_iters = 60
 
 group_name = "Replica"
@@ -36,7 +36,7 @@ config = dict(
     checkpoint_time_idx=0,
     save_checkpoints=False, # Save Checkpoints
     checkpoint_interval=100, # Checkpoint Interval
-    use_wandb=True,
+    use_wandb=False,
     wandb=dict(
         entity="theairlab",
         project="SplaTAM",
@@ -52,7 +52,7 @@ config = dict(
         desired_image_height=680,
         desired_image_width=1200,
         start=0,
-        end=-1,
+        end=40,
         stride=1,
         num_frames=-1,
     ),
@@ -61,9 +61,10 @@ config = dict(
         forward_prop=True, # Forward Propagate Poses
         num_iters=tracking_iters,
         use_sil_for_loss=True,
-        sil_thres=0.99,
+        sil_thres=0.98,
         use_l1=True,
-        ignore_outlier_depth_loss=False,
+        ignore_outlier_depth_loss= False,
+        visualize_tracking_loss = False,
         loss_weights=dict(
             im=0.5,
             depth=1.0,
@@ -85,9 +86,12 @@ config = dict(
         use_l1=True,
         use_sil_for_loss=False,
         ignore_outlier_depth_loss=False,
+        use_align_var = True,
         loss_weights=dict(
             im=0.5,
-            depth=1.0,
+            depth=0.5,       
+            align=0.25,
+            variance=0.15,
         ),
         lrs=dict(
             means3D=0.0001,
